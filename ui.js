@@ -31,6 +31,37 @@ function setTimeRange(range) {
 
 // Khởi chạy ứng dụng khi DOM Load
 window.addEventListener('load', () => {
+    // Kiểm tra và xử lý Token JWT được import tự động từ Duolingo qua Tampermonkey
+    const urlParams = new URLSearchParams(window.location.search);
+    const importJwt = urlParams.get('import_jwt');
+    if (importJwt) {
+        // Làm sạch URL ngay lập tức để tránh reload bị lặp lại hoặc lộ token
+        urlParams.delete('import_jwt');
+        const cleanSearch = urlParams.toString();
+        const newUrl = window.location.origin + window.location.pathname + (cleanSearch ? '?' + cleanSearch : '');
+        window.history.replaceState({}, document.title, newUrl);
+
+        if (importJwt === 'not_logged_in') {
+            alert('Không thể lấy Token JWT từ Duolingo. Vui lòng đăng nhập Duolingo trước trên trình duyệt rồi thử lại!');
+        } else {
+            // Mở modal thêm tài khoản
+            toggleModal('modal-add-account', true);
+            document.getElementById('acc-jwt').value = importJwt;
+            
+            // Điền sẵn Alias nếu tìm thấy username trong token
+            const username = getUsernameFromJwt(importJwt);
+            if (username) {
+                document.getElementById('acc-alias').value = `Tài khoản ${username}`;
+            }
+
+            // Hiển thị thông báo thành công dạng box xanh trong modal
+            const errorEl = document.getElementById('modal-add-error');
+            errorEl.textContent = '🎉 Đã tự động lấy Token JWT từ Duolingo thành công! Bạn chỉ cần tùy chỉnh Tên gợi nhớ (Alias) rồi nhấn Lưu.';
+            errorEl.className = "text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-xl";
+            errorEl.classList.remove('hidden');
+        }
+    }
+
     renderAccountsList();
     startCountdownDisplay();
 
@@ -43,15 +74,69 @@ window.addEventListener('load', () => {
     }
 
     // Lắng nghe sự kiện Submit Form Thêm Tài Khoản
-    document.getElementById('form-add-account').addEventListener('submit', (e) => {
+    document.getElementById('form-add-account').addEventListener('submit', async (e) => {
         e.preventDefault();
         const alias = document.getElementById('acc-alias').value.trim();
-        const jwt = document.getElementById('acc-jwt').value.trim();
         const errorEl = document.getElementById('modal-add-error');
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+        const originalBtnText = submitBtn.innerHTML;
 
+        errorEl.className = "hidden text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 p-3 rounded-xl";
         errorEl.classList.add('hidden');
 
+        let jwt = '';
+
+        if (currentModalTab === 'login') {
+            const loginVal = document.getElementById('acc-login').value.trim();
+            const passwordVal = document.getElementById('acc-password').value.trim();
+
+            if (!loginVal || !passwordVal) {
+                errorEl.textContent = 'Vui lòng điền đầy đủ tài khoản và mật khẩu!';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+
+            // Hiển thị trạng thái đang đăng nhập
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fa-solid fa-spinner animate-spin"></i> Đang đăng nhập...';
+
+            try {
+                const response = await fetch('/api/local-login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ login: loginVal, password: passwordVal })
+                });
+
+                const data = await response.json();
+                
+                if (!response.ok || !data.jwt) {
+                    throw new Error(data.error || 'Đăng nhập thất bại! Vui lòng kiểm tra lại tài khoản.');
+                }
+
+                jwt = data.jwt;
+            } catch (err) {
+                errorEl.textContent = '❌ ' + err.message;
+                errorEl.classList.remove('hidden');
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalBtnText;
+                return;
+            }
+        } else {
+            jwt = document.getElementById('acc-jwt').value.trim();
+            if (!jwt) {
+                errorEl.textContent = 'Vui lòng dán mã token JWT!';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+        }
+
+        // Thực hiện thêm tài khoản với JWT thu được
         const result = addAccount(alias, jwt);
+        
+        // Trả lại trạng thái cho submit button
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalBtnText;
+
         if (result.error) {
             errorEl.textContent = result.error;
             errorEl.classList.remove('hidden');
@@ -60,6 +145,8 @@ window.addEventListener('load', () => {
 
         // Reset dữ liệu input form
         document.getElementById('acc-alias').value = '';
+        if (document.getElementById('acc-login')) document.getElementById('acc-login').value = '';
+        if (document.getElementById('acc-password')) document.getElementById('acc-password').value = '';
         document.getElementById('acc-jwt').value = '';
 
         toggleModal('modal-add-account', false);
@@ -74,12 +161,60 @@ window.addEventListener('load', () => {
     });
 });
 
+// Trạng thái tab hiện tại trong modal thêm tài khoản
+let currentModalTab = 'login';
+
+// Chuyển đổi tab trong modal thêm tài khoản
+function switchModalTab(tabName) {
+    currentModalTab = tabName;
+    const tabLogin = document.getElementById('modal-tab-login');
+    const tabJwt = document.getElementById('modal-tab-jwt');
+    const contentLogin = document.getElementById('modal-content-login');
+    const contentJwt = document.getElementById('modal-content-jwt');
+
+    if (tabName === 'login') {
+        tabLogin.className = "flex-1 pb-2 text-xs font-black uppercase tracking-wider text-violet-400 border-b-2 border-violet-500 transition duration-150";
+        tabJwt.className = "flex-1 pb-2 text-xs font-black uppercase tracking-wider text-slate-400 border-b-2 border-transparent hover:text-slate-200 transition duration-150";
+        contentLogin.classList.remove('hidden');
+        contentJwt.classList.add('hidden');
+        
+        document.getElementById('acc-jwt').required = false;
+        document.getElementById('acc-login').required = true;
+        document.getElementById('acc-password').required = true;
+    } else {
+        tabLogin.className = "flex-1 pb-2 text-xs font-black uppercase tracking-wider text-slate-400 border-b-2 border-transparent hover:text-slate-200 transition duration-150";
+        tabJwt.className = "flex-1 pb-2 text-xs font-black uppercase tracking-wider text-violet-400 border-b-2 border-violet-500 transition duration-150";
+        contentLogin.classList.add('hidden');
+        contentJwt.classList.remove('hidden');
+
+        document.getElementById('acc-jwt').required = true;
+        document.getElementById('acc-login').required = false;
+        document.getElementById('acc-password').required = false;
+    }
+}
+
 // Bật/Tắt hiển thị các Hộp thoại (Modal)
 function toggleModal(modalId, isVisible) {
     const modal = document.getElementById(modalId);
     if (modal) {
         if (isVisible) {
             modal.classList.remove('hidden');
+            
+            // Nếu mở modal thêm tài khoản, reset về tab đăng nhập mặc định
+            if (modalId === 'modal-add-account') {
+                switchModalTab('login');
+                const errorEl = document.getElementById('modal-add-error');
+                if (errorEl) {
+                    errorEl.className = "hidden text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 p-3 rounded-xl";
+                    errorEl.textContent = "";
+                }
+                
+                // Clear inputs
+                document.getElementById('acc-alias').value = '';
+                if (document.getElementById('acc-login')) document.getElementById('acc-login').value = '';
+                if (document.getElementById('acc-password')) document.getElementById('acc-password').value = '';
+                document.getElementById('acc-jwt').value = '';
+            }
         } else {
             modal.classList.add('hidden');
         }
@@ -556,9 +691,11 @@ function renderTeamTab() {
         list.forEach(m => {
             const row = document.createElement('div');
             row.className = "flex items-center justify-between p-2.5 bg-white/5 border border-white/5 hover:border-slate-800 rounded-xl transition text-xs cursor-pointer";
+            const isLeader = m.username === 'ThanhTin72' || m.username === 'TaiTon_0811';
+            const leaderStar = isLeader ? '<i class="fa-solid fa-star text-amber-500 text-[10px] animate-pulse mr-1"></i>' : '';
             row.innerHTML = `
                 <span class="font-bold flex items-center gap-1.5 truncate ${m.isMe ? 'text-emerald-400' : 'text-slate-200'}">
-                    ${m.isMe ? '<i class="fa-solid fa-star text-amber-500 text-[10px] animate-pulse mr-1"></i>' : ''}${m.displayName || m.username}
+                    ${leaderStar}${m.displayName || m.username}
                 </span>
                 <span class="font-black text-slate-300">
                     +${(m.monthlyXp || 0).toLocaleString()} XP
@@ -749,7 +886,8 @@ async function showUserPopupTrigger(friend) {
     toggleModal('modal-user-stats', true);
 
     document.getElementById('popup-avatar').src = buildAvatarUrl(friend.picture);
-    document.getElementById('popup-name').textContent = friend.isMe ? `${friend.displayName || friend.username} (Tôi)` : (friend.displayName || friend.username);
+    const displayName = friend.isMe ? `${friend.displayName || friend.username} (Tôi)` : (friend.displayName || friend.username);
+    document.getElementById('popup-name').textContent = displayName;
     document.getElementById('popup-username').textContent = `@${friend.username}`;
     document.getElementById('popup-streak').textContent = friend.streak || 0;
     document.getElementById('popup-monthly').textContent = (friend.monthlyXp || 0).toLocaleString();

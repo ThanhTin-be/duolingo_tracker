@@ -19,6 +19,99 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    // Route xử lý Đăng nhập trực tiếp (Username/Password)
+    if (req.url === '/api/local-login' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => {
+            try {
+                const credentials = JSON.parse(body);
+                const { login, password } = credentials;
+                if (!login || !password) {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: 'Thiếu Tên đăng nhập hoặc Mật khẩu!' }));
+                    return;
+                }
+
+                // Thực hiện gửi request đăng nhập lên Duolingo
+                const payload = JSON.stringify({ identifier: login, password });
+                const loginOptions = {
+                    hostname: 'android-api.duolingo.com',
+                    port: 443,
+                    path: '/2017-06-30/login',
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Content-Length': Buffer.byteLength(payload),
+                        'User-Agent': 'DuolingoMobile/5.105.0 (Android; SDK 30; Scale/2.00)'
+                    }
+                };
+
+                console.log(`\n\x1b[35m[Proxy Login]\x1b[0m Đang gửi yêu cầu đăng nhập lên Duolingo cho tài khoản: \x1b[36m${login}\x1b[0m...`);
+
+                const duolingoReq = https.request(loginOptions, (duolingoRes) => {
+                    let responseData = '';
+                    duolingoRes.on('data', chunk => { responseData += chunk; });
+                    duolingoRes.on('end', () => {
+                        console.log(`\x1b[35m[Proxy Login]\x1b[0m Trạng thái phản hồi từ Duolingo: \x1b[33m${duolingoRes.statusCode}\x1b[0m`);
+                        console.log(`\x1b[35m[Proxy Login]\x1b[0m Headers phản hồi từ Duolingo:`, duolingoRes.headers);
+                        console.log(`\x1b[35m[Proxy Login]\x1b[0m Body phản hồi từ Duolingo:`, responseData);
+
+                        let jwtToken = '';
+                        
+                        // 1. Tìm token trong cookies Set-Cookie
+                        const setCookieHeaders = duolingoRes.headers['set-cookie'] || [];
+                        for (const cookie of setCookieHeaders) {
+                            if (cookie.startsWith('jwt_token=')) {
+                                jwtToken = cookie.split(';')[0].split('=')[1];
+                                break;
+                            }
+                        }
+
+                        // 2. Tìm trong response body JSON
+                        try {
+                            const parsed = JSON.parse(responseData);
+                            if (parsed.jwt) {
+                                jwtToken = parsed.jwt;
+                            }
+                        } catch (e) {}
+
+                        if (jwtToken) {
+                            console.log(`\x1b[32m[Proxy Login] Đăng nhập THÀNH CÔNG! Đã lấy được JWT Token.\x1b[0m`);
+                            res.writeHead(200, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ success: true, jwt: jwtToken }));
+                        } else {
+                            console.error(`\x1b[31m[Proxy Login] Đăng nhập THẤT BẠI! Không tìm thấy JWT Token trong phản hồi.\x1b[0m`);
+                            let errorMessage = 'Đăng nhập Duolingo thất bại. Sai mật khẩu hoặc tài khoản!';
+                            try {
+                                const parsed = JSON.parse(responseData);
+                                if (parsed.failure || parsed.message) {
+                                    errorMessage = parsed.message || parsed.failure;
+                                }
+                            } catch (e) {}
+                            res.writeHead(401, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: errorMessage }));
+                        }
+                    });
+                });
+
+                duolingoReq.on('error', (err) => {
+                    console.error(`\x1b[31m[Proxy Login] Lỗi kết nối HTTPS:\x1b[0m`, err.message);
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: 'Lỗi kết nối Duolingo: ' + err.message }));
+                });
+
+                duolingoReq.write(payload);
+                duolingoReq.end();
+
+            } catch (e) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Dữ liệu yêu cầu không hợp lệ!' }));
+            }
+        });
+        return;
+    }
+
     // Serve static files for the dashboard
     if (req.url === '/' || req.url === '/index.html') {
         const filePath = path.join(__dirname, 'index.html');
