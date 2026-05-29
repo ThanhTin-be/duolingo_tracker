@@ -1,0 +1,19 @@
+# ============================================================
+# DUOLINGO FRIEND TRACKER — GIT EXCLUSION RULES (.gitignore)
+# ============================================================
+
+# Chặn file tài liệu ghi chú API cá nhân
+duolingo_api_notes.md
+*api_note*
+
+# Chặn file scripts cào dữ liệu gốc & userscript cục bộ
+friend_tracker.js
+frien_tracker.js
+script.js
+
+# Chặn các file sao lưu dữ liệu JSON cá nhân (tránh lộ thông tin nhạy cảm)
+*.json
+
+# Loại trừ các file cấu hình quan trọng (vẫn cho phép đẩy lên Github)
+!package.json
+!vercel.json

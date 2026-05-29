@@ -1,0 +1,65 @@
+/* ============================================================
+   DUOLINGO FRIEND TRACKER — STYLESHEET
+   Vanilla CSS design tokens, scrollbars, and animations
+   ============================================================ */
+
+body {
+    font-family: 'Outfit', 'Inter', sans-serif;
+    background-color: #090914;
+    background-image:
+        radial-gradient(at 10% 20%, rgba(124, 58, 237, 0.08) 0px, transparent 50%),
+        radial-gradient(at 90% 80%, rgba(99, 102, 241, 0.08) 0px, transparent 50%);
+    background-attachment: fixed;
+}
+
+/* Glassmorphism Panels */
+.glass-panel {
+    background: rgba(18, 18, 32, 0.65);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(139, 92, 246, 0.15);
+}
+
+.glass-panel-hover {
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.glass-panel-hover:hover {
+    transform: translateY(-2px);
+    border-color: rgba(139, 92, 246, 0.3);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 15px rgba(124, 58, 237, 0.15);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(139, 92, 246, 0.3);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(139, 92, 246, 0.5);
+}
+
+/* Animations */
+@keyframes rotate-spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.animate-spin-custom {
+    animation: rotate-spin 1s linear infinite;
+}
