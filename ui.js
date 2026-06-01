@@ -889,6 +889,7 @@ async function showUserPopupTrigger(friend) {
     const displayName = friend.isMe ? `${friend.displayName || friend.username} (Tôi)` : (friend.displayName || friend.username);
     document.getElementById('popup-name').textContent = displayName;
     document.getElementById('popup-username').textContent = `@${friend.username}`;
+    document.getElementById('popup-username-link').href = `https://www.duolingo.com/profile/${friend.username}?via=friends`;
     document.getElementById('popup-streak').textContent = friend.streak || 0;
     document.getElementById('popup-monthly').textContent = (friend.monthlyXp || 0).toLocaleString();
     document.getElementById('popup-today').textContent = (friend.xpGainedToday || 0).toLocaleString();
@@ -900,7 +901,8 @@ async function showUserPopupTrigger(friend) {
 
     // Gọi API lấy lịch sử cày 7 ngày
     const token = cachedActiveToken;
-    const days7 = await fetchXpLast7Days(friend.userId, token);
+    const tz = getUserTimezone(friend);
+    const days7 = await fetchXpLast7Days(friend.userId, token, tz);
 
     if (days7.length === 0) {
         barContainer.innerHTML = `<div class="text-xs text-slate-500 font-semibold w-full text-center py-8">Không có dữ liệu 7 ngày.</div>`;

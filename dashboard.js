@@ -125,10 +125,29 @@ function getHofHistory() {
     let hof;
     try { hof = JSON.parse(localStorage.getItem(HOF_KEY)); } catch {}
     const defaultHof = [
+        { month:"2026-05", vnWinner:{name:"Thu",xp:37247}, usWinner:{name:"Nic",xp:1688}, teamWinner:{name:"Doulingo super vip",xp:114745} },
         { month:"2026-04", vnWinner:{name:"Nguyễn Đức Mạnh",xp:25461}, usWinner:{name:"Lauryn",xp:18500}, teamWinner:{name:"Top1Server",xp:85460} },
         { month:"2026-03", vnWinner:{name:"Thanh Tín",xp:48885}, usWinner:{name:"Lauryn",xp:28600}, teamWinner:{name:"Top1Server",xp:161643} }
     ];
-    if (!hof || hof.length === 0) { hof = defaultHof; saveHofHistory(hof); }
+    if (!hof || hof.length === 0) { 
+        hof = defaultHof; 
+        saveHofHistory(hof); 
+    } else {
+        // Đảm bảo dữ liệu tháng 5/2026 luôn chính xác theo yêu cầu thủ công
+        const mayIdx = hof.findIndex(h => h.month === "2026-05");
+        const correctMay = { month:"2026-05", vnWinner:{name:"Thu",xp:37247}, usWinner:{name:"Nic",xp:1688}, teamWinner:{name:"Doulingo super vip",xp:114745} };
+        if (mayIdx >= 0) {
+            const existing = hof[mayIdx];
+            if (existing.vnWinner?.xp !== 37247 || existing.usWinner?.xp !== 1688 || existing.teamWinner?.xp !== 114745) {
+                hof[mayIdx] = correctMay;
+                saveHofHistory(hof);
+            }
+        } else {
+            hof.unshift(correctMay);
+            hof.sort((a, b) => b.month.localeCompare(a.month));
+            saveHofHistory(hof);
+        }
+    }
     return hof;
 }
 function saveHofHistory(h) { localStorage.setItem(HOF_KEY, JSON.stringify(h)); }
@@ -136,10 +155,15 @@ function saveHofHistory(h) { localStorage.setItem(HOF_KEY, JSON.stringify(h)); }
 function getSummarizedMonths() {
     try { 
         const s = JSON.parse(localStorage.getItem(SUMMARIZED_KEY));
-        if (!s || s.length === 0) return ["2026-03","2026-04"];
+        const defaults = ["2026-03","2026-04","2026-05"];
+        if (!s || s.length === 0) return defaults;
+        if (!s.includes("2026-05")) {
+            s.push("2026-05");
+            saveSummarizedMonths(s);
+        }
         return s;
     }
-    catch { return ["2026-03","2026-04"]; }
+    catch { return ["2026-03","2026-04","2026-05"]; }
 }
 function saveSummarizedMonths(m) { localStorage.setItem(SUMMARIZED_KEY, JSON.stringify(m)); }
 
@@ -197,18 +221,50 @@ async function fetchUserStreak(userId, token) {
     } catch { return 0; }
 }
 
-function getLocalDateParts(timezone) {
+function getUserLocalDateParts(date, timezone) {
     const tz = timezone || "Asia/Ho_Chi_Minh";
     try {
-        const formatter = new Intl.DateTimeFormat("en-US", {timeZone:tz,year:"numeric",month:"numeric",day:"numeric"});
-        const parts = formatter.formatToParts(new Date());
+        const formatter = new Intl.DateTimeFormat("en-US", {
+            timeZone: tz,
+            year: "numeric",
+            month: "numeric",
+            day: "numeric"
+        });
+        const parts = formatter.formatToParts(date);
         const d = {};
-        for (const p of parts) if (p.type !== "literal") d[p.type] = parseInt(p.value,10);
-        return { year:d.year, month:d.month-1, day:d.day };
+        for (const p of parts) {
+            if (p.type !== "literal") d[p.type] = parseInt(p.value, 10);
+        }
+        const monthStr = String(d.month).padStart(2, '0');
+        const dayStr = String(d.day).padStart(2, '0');
+        return {
+            year: d.year,
+            month: d.month - 1, // 0-indexed for JS Date compatibility
+            day: d.day,
+            monthKey: `${d.year}-${monthStr}`,
+            dateKey: `${d.year}-${monthStr}-${dayStr}`
+        };
     } catch {
-        const t = new Date();
-        return { year:t.getFullYear(), month:t.getMonth(), day:t.getDate() };
+        return {
+            year: date.getFullYear(),
+            month: date.getMonth(),
+            day: date.getDate(),
+            monthKey: `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}`,
+            dateKey: `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`
+        };
     }
+}
+
+function getXpGainedInMonth(summaries, monthKey, timezone) {
+    let total = 0;
+    if (!summaries) return 0;
+    summaries.forEach(s => {
+        const sdParts = getUserLocalDateParts(new Date(s.date * 1000), timezone);
+        if (sdParts.monthKey === monthKey) {
+            total += s.gainedXp;
+        }
+    });
+    return total;
 }
 
 async function fetchUserXpBreakdown(userId, token, timezone) {
@@ -216,29 +272,21 @@ async function fetchUserXpBreakdown(userId, token, timezone) {
     const headers = token ? {'Authorization':`Bearer ${token}`} : {};
     try {
         const res = await fetch(getApiUrl(url), {headers});
-        if (!res.ok) return { today: 0, weekly: 0 };
+        if (!res.ok) return { today: 0, weekly: 0, summaries: [] };
         const data = await res.json();
-        if (!data?.summaries) return { today: 0, weekly: 0 };
+        if (!data?.summaries) return { today: 0, weekly: 0, summaries: [] };
 
-        const localDate = getLocalDateParts(timezone);
+        const localDate = getUserLocalDateParts(new Date(), timezone);
         
         // 1. Tính XP Hôm nay
         const todaySummary = data.summaries.find(s => {
-            const d = new Date(s.date * 1000);
-            return d.getUTCDate()===localDate.day && d.getUTCMonth()===localDate.month && d.getUTCFullYear()===localDate.year;
+            const sdParts = getUserLocalDateParts(new Date(s.date * 1000), timezone);
+            return sdParts.dateKey === localDate.dateKey;
         });
         const today = todaySummary ? todaySummary.gainedXp : 0;
 
         // 2. Tính XP Tuần (Thứ Hai đến Chủ Nhật theo múi giờ local)
-        const tz = timezone || "Asia/Ho_Chi_Minh";
-        const now = new Date();
-        
-        const formatter = new Intl.DateTimeFormat("en-US", {timeZone:tz,year:"numeric",month:"numeric",day:"numeric"});
-        const parts = formatter.formatToParts(now);
-        const d = {};
-        for (const p of parts) if (p.type !== "literal") d[p.type] = parseInt(p.value,10);
-        const localNowDate = new Date(d.year, d.month - 1, d.day);
-        
+        const localNowDate = new Date(localDate.year, localDate.month, localDate.day);
         const dayOfWeek = localNowDate.getDay(); // 0: CN, 1: T2, ..., 6: T7
         const daysSinceMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
         
@@ -248,25 +296,22 @@ async function fetchUserXpBreakdown(userId, token, timezone) {
 
         let weekly = 0;
         data.summaries.forEach(s => {
-            const sd = new Date(s.date * 1000);
-            const sdParts = formatter.formatToParts(sd);
-            const sdD = {};
-            for (const p of sdParts) if (p.type !== "literal") sdD[p.type] = parseInt(p.value,10);
-            const sdLocalDate = new Date(sdD.year, sdD.month - 1, sdD.day);
+            const sdParts = getUserLocalDateParts(new Date(s.date * 1000), timezone);
+            const sdLocalDate = new Date(sdParts.year, sdParts.month, sdParts.day);
 
             if (sdLocalDate >= startOfWeek && sdLocalDate <= localNowDate) {
                 weekly += s.gainedXp;
             }
         });
 
-        return { today, weekly };
+        return { today, weekly, summaries: data.summaries };
     } catch(e) { 
         console.error('fetchUserXpBreakdown error:', e);
-        return { today: 0, weekly: 0 }; 
+        return { today: 0, weekly: 0, summaries: [] }; 
     }
 }
 
-async function fetchXpLast7Days(userId, token) {
+async function fetchXpLast7Days(userId, token, timezone) {
     const url = `https://www.duolingo.com/2023-05-23/users/${userId}/xp_summaries`;
     const headers = token ? {'Authorization':`Bearer ${token}`} : {};
     try {
@@ -276,13 +321,22 @@ async function fetchXpLast7Days(userId, token) {
         if (!data?.summaries) return [];
         const dayNames = ['CN','T2','T3','T4','T5','T6','T7'];
         const days = [];
+        
         for (let i = 6; i >= 0; i--) {
-            const d = new Date(); d.setDate(d.getDate()-i);
+            const targetDate = new Date();
+            targetDate.setDate(targetDate.getDate() - i);
+            const targetParts = getUserLocalDateParts(targetDate, timezone);
+            
             const s = data.summaries.find(s => {
-                const sd = new Date(s.date*1000);
-                return sd.getUTCDate()===d.getDate() && sd.getUTCMonth()===d.getMonth() && sd.getUTCFullYear()===d.getFullYear();
+                const sdParts = getUserLocalDateParts(new Date(s.date * 1000), timezone);
+                return sdParts.dateKey === targetParts.dateKey;
             });
-            days.push({ label: i===0?'Hôm nay':dayNames[d.getDay()], xp: s?s.gainedXp:0 });
+            
+            const localDateObj = new Date(targetParts.year, targetParts.month, targetParts.day);
+            let label = dayNames[localDateObj.getDay()];
+            if (i === 0) label = 'Hôm nay';
+            
+            days.push({ label, xp: s ? s.gainedXp : 0 });
         }
         return days;
     } catch { return []; }
@@ -374,7 +428,12 @@ async function initDashboard(onStatus, onDone) {
     let allUsers = [...friends];
     if (me) {
         const meF = { userId:me.id, displayName:me.name||me.username, username:me.username, picture:me.picture, totalXp:me.totalXp, userScore:{score:me.streak}, isMe:true };
-        if (!allUsers.some(u=>u.userId===meF.userId)) allUsers.push(meF);
+        const existingUser = allUsers.find(u => String(u.userId) === String(meF.userId));
+        if (existingUser) {
+            existingUser.isMe = true;
+        } else {
+            allUsers.push(meF);
+        }
     }
 
     const allTeamUsernames = [...TEAMS_CONFIG.team1.members, ...TEAMS_CONFIG.team2.members];
@@ -395,10 +454,25 @@ async function initDashboard(onStatus, onDone) {
     checkAndChotSo(allUsers, bases);
 
     onStatus(`Đang đồng bộ XP và streak (${allUsers.length} người)...`, 'loading');
+    const todayDate = new Date();
+    const isFirstWeek = todayDate.getDate() <= 7;
     const friendsWithXp = await Promise.all(allUsers.map(async friend => {
         const tz = getUserTimezone(friend);
         const xpBreakdown = await fetchUserXpBreakdown(friend.userId, token, tz);
-        const baseMonthXp = bases[currentMonth][friend.userId] || friend.totalXp;
+        
+        // Hiệu chỉnh base XP của tháng (Timezone-safe và phòng ngừa cày trước khi load)
+        const currentMonthXp = getXpGainedInMonth(xpBreakdown.summaries, currentMonth, tz);
+        let baseMonthXp = bases[currentMonth][friend.userId];
+        
+        if (typeof baseMonthXp !== 'number' || isFirstWeek) {
+            const correctedBase = friend.totalXp - currentMonthXp;
+            if (baseMonthXp !== correctedBase) {
+                bases[currentMonth][friend.userId] = correctedBase;
+                baseMonthXp = correctedBase;
+                changed = true;
+            }
+        }
+        
         const monthlyXp = Math.max(0, friend.totalXp - baseMonthXp);
         let streak;
         if (typeof friend.streak === 'number') streak = friend.streak;
@@ -413,6 +487,8 @@ async function initDashboard(onStatus, onDone) {
             streak 
         };
     }));
+
+    if (changed) saveMonthlyBaseXp(bases);
 
     onStatus(`✅ Tải xong ${friendsWithXp.length} thành viên`, 'success');
     onDone(friendsWithXp, token);

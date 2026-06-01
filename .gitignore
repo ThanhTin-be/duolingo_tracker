@@ -10,6 +10,7 @@ duolingo_api_notes.md
 friend_tracker.js
 frien_tracker.js
 script.js
+unused_files/
 
 # Chặn các file sao lưu dữ liệu JSON cá nhân (tránh lộ thông tin nhạy cảm)
 *.json
